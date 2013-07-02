@@ -872,7 +872,7 @@ class HTTPUtil(object):
         else:
             request_data = ''
         request_data += '%s %s %s\r\n' % (method, path, protocol_version)
-        request_data += ''.join('%s: %s\r\n' % (k, v) for k, v in headers.items() if k not in skip_headers)
+        request_data += ''.join('%s: %s\r\n' % (k.title(), v) for k, v in headers.items() if k.title() not in skip_headers)
         if self.proxy:
             _, username, password, _ = ProxyUtil.parse_proxy(self.proxy)
             if username and password:
@@ -919,7 +919,8 @@ class HTTPUtil(object):
         else:
             host, _, port = netloc.rpartition(':')
             port = int(port)
-        path += '?' + query
+        if query:
+            path += '?' + query
 
         if 'Host' not in headers:
             headers['Host'] = host
@@ -1023,8 +1024,6 @@ class Common(object):
         self.GOOGLE_HOSTS = [x for x in self.CONFIG.get(self.GAE_PROFILE, 'hosts').split('|') if x]
         self.GOOGLE_SITES = tuple(x for x in self.CONFIG.get(self.GAE_PROFILE, 'sites').split('|') if x)
         self.GOOGLE_FORCEHTTPS = tuple('http://'+x for x in self.CONFIG.get(self.GAE_PROFILE, 'forcehttps').split('|') if x)
-        self.GOOGLE_FAKEHTTPS = tuple(x for x in self.CONFIG.get(self.GAE_PROFILE, 'fakehttps').split('|') if x)
-        self.GOOGLE_NOFAKEHTTPS = tuple(x for x in self.CONFIG.get(self.GAE_PROFILE, 'nofakehttps').split('|') if x)
         self.GOOGLE_WITHGAE = tuple(x for x in self.CONFIG.get(self.GAE_PROFILE, 'withgae').split('|') if x)
 
         self.AUTORANGE_HOSTS = self.CONFIG.get('autorange', 'hosts').split('|')
@@ -1154,7 +1153,7 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
         # not a ajax request, we could abbv the headers
         abbv_headers = http_util.abbv_headers
         g_abbv = []
-        for keyword in [x for x in headers if x not in skip_headers]:
+        for keyword in [x for x in headers if x.title() not in skip_headers]:
             value = headers[keyword]
             if keyword in abbv_headers and abbv_headers[keyword][1](value):
                 g_abbv.append(abbv_headers[keyword][0])
@@ -1163,7 +1162,7 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
         if g_abbv:
             metadata += 'G-Abbv:%s\n' % ','.join(g_abbv)
     else:
-        metadata += ''.join('%s:%s\n' % (k.title(), v) for k, v in headers.items() if k not in skip_headers)
+        metadata += ''.join('%s:%s\n' % (k.title(), v) for k, v in headers.items() if k.title() not in skip_headers)
     metadata = zlib.compress(metadata.encode())[2:-4]
     need_crlf = 0 if fetchserver.startswith('https') else common.GAE_CRLF
     if common.GAE_OBFUSCATE:
@@ -1235,7 +1234,7 @@ class RangeFetch(object):
             response_headers['Content-Length'] = str(length-start)
 
         logging.info('>>>>>>>>>>>>>>> RangeFetch started(%r) %d-%d', self.url, start, end)
-        self.wfile.write(('HTTP/1.1 %s\r\n%s\r\n' % (response_status, ''.join('%s: %s\r\n' % (k, v) for k, v in response_headers.items()))).encode())
+        self.wfile.write(('HTTP/1.1 %s\r\n%s\r\n' % (response_status, ''.join('%s: %s\r\n' % (k.title(), v) for k, v in response_headers.items()))).encode())
 
         data_queue = queue.PriorityQueue()
         range_queue = queue.PriorityQueue()
@@ -1552,7 +1551,7 @@ class GAEProxyHandler(http.server.BaseHTTPRequestHandler):
             logging.info('%s "FWD %s %s HTTP/1.1" %s %s', self.address_string(), self.command, self.path, response.status, response.getheader('Content-Length', '-'))
             if response.status in (400, 405):
                 common.GAE_CRLF = 0
-            self.wfile.write(('HTTP/1.1 %s\r\n%s\r\n' % (response.status, ''.join('%s: %s\r\n' % (k.title(), v) for k, v in response.getheaders() if k != 'Transfer-Encoding'))).encode())
+            self.wfile.write(('HTTP/1.1 %s\r\n%s\r\n' % (response.status, ''.join('%s: %s\r\n' % (k.title(), v) for k, v in response.getheaders() if k.title() != 'Transfer-Encoding'))).encode())
             while 1:
                 data = response.read(8192)
                 if not data:
@@ -1639,7 +1638,7 @@ class GAEProxyHandler(http.server.BaseHTTPRequestHandler):
                     continue
                 if response.app_status != 200 and retry == common.FETCHMAX_LOCAL-1:
                     logging.info('%s "GAE %s %s HTTP/1.1" %s -', self.address_string(), self.command, self.path, response.status)
-                    self.wfile.write(('HTTP/1.1 %s\r\n%s\r\n' % (response.status, ''.join('%s: %s\r\n' % (k.title(), v) for k, v in response.getheaders() if k != 'Transfer-Encoding'))).encode())
+                    self.wfile.write(('HTTP/1.1 %s\r\n%s\r\n' % (response.status, ''.join('%s: %s\r\n' % (k.title(), v) for k, v in response.getheaders() if k.title() != 'Transfer-Encoding'))).encode())
                     self.wfile.write(response.read())
                     response.close()
                     return
@@ -1696,13 +1695,13 @@ class GAEProxyHandler(http.server.BaseHTTPRequestHandler):
     def do_CONNECT(self):
         """handle CONNECT cmmand, socket forward or deploy a fake cert"""
         host = self.path.rpartition(':')[0]
-        if common.HOSTS_CONNECT_MATCH and any(x(self.path) for x in common.HOSTS_CONNECT_MATCH) or host.endswith(common.GOOGLE_NOFAKEHTTPS):
+        if common.HOSTS_CONNECT_MATCH and any(x(self.path) for x in common.HOSTS_CONNECT_MATCH):
             self.do_CONNECT_FWD()
-        elif host.endswith(common.GOOGLE_SITES) and not host.endswith(common.GOOGLE_WITHGAE) and not host.endswith(common.GOOGLE_FAKEHTTPS):
+        elif host.endswith(common.GOOGLE_SITES) and not host.endswith(common.GOOGLE_WITHGAE):
             http_util.dns[host] = common.GOOGLE_HOSTS
             self.do_CONNECT_FWD()
         else:
-            self.do_CONNECT_PROCESS()
+            self.do_CONNECT_AGENT()
 
     def do_CONNECT_FWD(self):
         """socket forward for http CONNECT command"""
@@ -1742,12 +1741,12 @@ class GAEProxyHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b'HTTP/1.1 200 OK\r\n\r\n')
             http_util.forward_socket(self.connection, remote, bufsize=self.bufsize)
 
-    def do_CONNECT_PROCESS(self):
+    def do_CONNECT_AGENT(self):
         """deploy fake cert to client"""
         host, _, port = self.path.rpartition(':')
         port = int(port)
         certfile = CertUtil.get_cert(host)
-        logging.info('%s "PROCESS %s %s:%d HTTP/1.1" - -', self.address_string(), self.command, host, port)
+        logging.info('%s "AGENT %s %s:%d HTTP/1.1" - -', self.address_string(), self.command, host, port)
         self.__realconnection = None
         self.wfile.write(b'HTTP/1.1 200 OK\r\n\r\n')
         try:
@@ -1810,7 +1809,7 @@ def paas_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
         kwargs['xorchar'] = random.choice(kwargs.get('password') or 'goagent')
     if common.PAAS_VALIDATE:
         kwargs['validate'] = 1
-    metadata = 'G-Method:%s\nG-Url:%s\n%s%s' % (method, url, ''.join('G-%s:%s\n' % (k, v) for k, v in kwargs.items() if v), ''.join('%s:%s\n' % (k, v) for k, v in headers.items() if k not in skip_headers))
+    metadata = 'G-Method:%s\nG-Url:%s\n%s%s' % (method, url, ''.join('G-%s:%s\n' % (k, v) for k, v in kwargs.items() if v), ''.join('%s:%s\n' % (k, v) for k, v in headers.items() if k.title() not in skip_headers))
     metadata = zlib.compress(metadata.encode())[2:-4]
     app_payload = b''.join((struct.pack('!h', len(metadata)), metadata, payload))
     fetchserver += '?%s' % random.random()
@@ -1863,7 +1862,7 @@ class PAASProxyHandler(GAEProxyHandler):
         self.__class__.do_HEAD = self.__class__.do_METHOD
         self.__class__.do_DELETE = self.__class__.do_METHOD
         self.__class__.do_OPTIONS = self.__class__.do_METHOD
-        self.__class__.do_CONNECT = GAEProxyHandler.do_CONNECT_PROCESS
+        self.__class__.do_CONNECT = GAEProxyHandler.do_CONNECT_AGENT
         self.setup()
 
     def do_METHOD(self):
